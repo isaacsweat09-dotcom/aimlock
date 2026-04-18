@@ -1,0 +1,202 @@
+--// Services
+local Players = game:GetService("Players")
+local UIS = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+local player = Players.LocalPlayer
+local camera = workspace.CurrentCamera
+
+--// GUI
+local gui = Instance.new("ScreenGui")
+gui.Parent = player:WaitForChild("PlayerGui")
+gui.ResetOnSpawn = false
+
+-- Lock Button
+local lockBtn = Instance.new("TextButton")
+lockBtn.Size = UDim2.new(0, 70, 0, 70)
+lockBtn.Position = UDim2.new(0.5, -35, 0.8, -35)
+lockBtn.BackgroundTransparency = 1
+lockBtn.Text = "🔓"
+lockBtn.TextScaled = true
+lockBtn.Parent = gui
+
+-- Drag Toggle Button
+local dragToggle = Instance.new("TextButton")
+dragToggle.Size = UDim2.new(0, 70, 0, 30)
+dragToggle.Position = UDim2.new(0.5, -35, 0.8, 40)
+dragToggle.BackgroundTransparency = 0.3
+dragToggle.Text = "DRAG: OFF"
+dragToggle.TextScaled = true
+dragToggle.Parent = gui
+
+--// Drag System
+local dragging = false
+local dragEnabled = false
+local dragStart, startPosLock, startPosToggle
+
+dragToggle.MouseButton1Click:Connect(function()
+	dragEnabled = not dragEnabled
+	dragToggle.Text = dragEnabled and "DRAG: ON" or "DRAG: OFF"
+end)
+
+local function startDrag(input)
+	if not dragEnabled then return end
+
+	dragging = true
+	dragStart = input.Position
+	startPosLock = lockBtn.Position
+	startPosToggle = dragToggle.Position
+
+	input.Changed:Connect(function()
+		if input.UserInputState == Enum.UserInputState.End then
+			dragging = false
+		end
+	end)
+end
+
+lockBtn.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+	or input.UserInputType == Enum.UserInputType.Touch then
+		startDrag(input)
+	end
+end)
+
+dragToggle.InputBegan:Connect(function(input)
+	if input.UserInputType == Enum.UserInputType.MouseButton1
+	or input.UserInputType == Enum.UserInputType.Touch then
+		startDrag(input)
+	end
+end)
+
+UIS.InputChanged:Connect(function(input)
+	if dragging and dragEnabled and (
+		input.UserInputType == Enum.UserInputType.MouseMovement
+		or input.UserInputType == Enum.UserInputType.Touch) then
+
+		local delta = input.Position - dragStart
+
+		lockBtn.Position = UDim2.new(
+			startPosLock.X.Scale,
+			startPosLock.X.Offset + delta.X,
+			startPosLock.Y.Scale,
+			startPosLock.Y.Offset + delta.Y
+		)
+
+		dragToggle.Position = UDim2.new(
+			startPosToggle.X.Scale,
+			startPosToggle.X.Offset + delta.X,
+			startPosToggle.Y.Scale,
+			startPosToggle.Y.Offset + delta.Y
+		)
+	end
+end)
+
+--// AIM LOCK
+local locked = false
+local target = nil
+local lockConnection = nil
+
+local function getClosestPlayer()
+	local closest = nil
+	local shortest = math.huge
+
+	for _, plr in ipairs(Players:GetPlayers()) do
+		if plr ~= player and plr.Character and plr.Character:FindFirstChild("HumanoidRootPart") then
+			local hrp = plr.Character.HumanoidRootPart
+			local screenPoint, onScreen = camera:WorldToViewportPoint(hrp.Position)
+
+			if onScreen then
+				local dist = (Vector2.new(screenPoint.X, screenPoint.Y)
+					- camera.ViewportSize/2).Magnitude
+
+				if dist < shortest then
+					shortest = dist
+					closest = plr
+				end
+			end
+		end
+	end
+
+	return closest
+end
+
+local function getAimPart(character)
+	return character:FindFirstChild("UpperTorso")
+		or character:FindFirstChild("HumanoidRootPart")
+end
+
+--// FIXED AIM (no prediction, near-instant follow)
+local function startLock()
+	lockConnection = RunService.RenderStepped:Connect(function()
+
+		if target and target.Character then
+			local part = getAimPart(target.Character)
+
+			if part then
+				local camPos = camera.CFrame.Position
+
+				-- NO prediction (0)
+				local targetPos = part.Position
+
+				-- "smoothness 2" feel = basically instant follow (safe version)
+				local targetCF = CFrame.new(camPos, targetPos)
+				camera.CFrame = targetCF
+			end
+		end
+	end)
+end
+
+local function stopLock()
+	if lockConnection then
+		lockConnection:Disconnect()
+		lockConnection = nil
+	end
+	target = nil
+end
+
+--// Death Reset
+local function setupDeathReset()
+	local char = player.Character or player.CharacterAdded:Wait()
+	local humanoid = char:WaitForChild("Humanoid")
+
+	humanoid.Died:Connect(function()
+		locked = false
+		target = nil
+		lockBtn.Text = "🔓"
+		stopLock()
+	end)
+end
+
+player.CharacterAdded:Connect(function()
+	task.wait(1)
+	setupDeathReset()
+end)
+
+setupDeathReset()
+
+--// Click Handling
+local clickValid = true
+
+lockBtn.InputBegan:Connect(function()
+	clickValid = true
+end)
+
+lockBtn.InputChanged:Connect(function()
+	if dragging then
+		clickValid = false
+	end
+end)
+
+lockBtn.MouseButton1Click:Connect(function()
+	if not clickValid then return end
+
+	locked = not locked
+	lockBtn.Text = locked and "🔒" or "🔓"
+
+	if locked then
+		target = getClosestPlayer()
+		startLock()
+	else
+		stopLock()
+	end
+end)
